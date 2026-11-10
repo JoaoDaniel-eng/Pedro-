@@ -23,8 +23,8 @@ O schema e os dados iniciais são criados de forma idempotente quando o servidor
 1. Crie um banco PostgreSQL no Neon e copie a connection string (use SSL).
 2. Publique esta pasta em um repositório Git, ou use o método de deploy aceito pelo seu serviço de hospedagem.
 3. No Render, crie um Web Service com ambiente Node. Build command: `npm install`. Start command: `npm start`.
-4. Cadastre as variáveis `NODE_ENV=production`, `BUNKER_DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER` no painel do Render. Não envie `.env` ao repositório.
-5. Faça o deploy e confira `/api/health`. Para monitorar também o banco (ex.: UptimeRobot), use `/api/health/db`; não o configure como health check do Render, porque o Neon suspende o banco quando ocioso e a primeira consulta pode demorar.
+4. Em **Environment** do serviço Bunker, cadastre `NODE_ENV=production`, `BUNKER_DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER` no painel do Render. Não envie `.env` ao repositório.
+5. Faça o deploy e confira no log a linha `[Bunker] PostgreSQL ativo: database=...; user=...`. Confirme que o nome do banco é o banco exclusivo do Bunker (e diferente do Açaí). Depois confira `/api/health`. Para monitorar também o banco (ex.: UptimeRobot), use `/api/health/db`; não o configure como health check do Render, porque o Neon suspende o banco quando ocioso e a primeira consulta pode demorar.
 6. Configure o domínio personalizado nas configurações do serviço e siga as instruções de DNS fornecidas pelo Render. Para domínio `.com.br`, o registro e a renovação são feitos pelo registrador escolhido.
 
 ## Funcionalidades
