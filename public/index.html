@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#c8102e"><link rel="manifest" href="/manifest.webmanifest">
+<meta name="description" content="Peça lanches, porções e bebidas com entrega ou retirada.">
+<title>Lanchonete | Faça seu pedido</title>
+<link rel="stylesheet" href="/css/styles.css"><script src="/js/app.js" defer></script></head>
+<body>
+<header class="site-header"><a class="brand" href="/">🍔 <span id="brand-name">Lanchonete</span></a><a class="header-cta" href="#pedido">Meu pedido <span id="cart-count" class="cart-count">0</span></a></header>
+<div class="store-banner hidden" id="store-banner">Loja fechada no momento. Voltamos em breve!</div>
+<main>
+<section class="hero"><div><span class="eyebrow">FEITO NA HORA 🔥</span><h1>Fome? A gente resolve.</h1><p>Escolha seus lanches, aperte o botão e receba em casa ou retire na loja.</p><a class="button" href="#cardapio">Ver cardápio</a></div></section>
+<section class="section" id="cardapio"><h2>Cardápio</h2><div id="menu" aria-live="polite">Carregando…</div></section>
+<section class="section" id="pedido"><h2>Meu pedido</h2>
+<p class="muted" id="cart-empty">Seu pedido está vazio. Escolha algo no cardápio.</p>
+<ul id="cart-list" class="cart-list"></ul>
+<form id="order-form" class="hidden">
+<div class="segmented"><label><input type="radio" name="type" value="entrega" checked><span>🛵 Entrega</span></label><label><input type="radio" name="type" value="retirada"><span>🏪 Retirada</span></label></div>
+<label>Nome<input name="customerName" required minlength="2" maxlength="120" autocomplete="name"></label>
+<label>Celular com DDD<input name="phone" required inputmode="tel" autocomplete="tel" placeholder="(21) 99999-9999"></label>
+<label id="address-label">Endereço completo<input name="address" maxlength="400" autocomplete="street-address" placeholder="Rua, número, bairro"></label>
+<label>Pagamento<select name="payment"><option value="pix">Pix</option><option value="dinheiro">Dinheiro</option><option value="cartao">Cartão na entrega</option></select></label>
+<label>Observações<input name="notes" maxlength="300" placeholder="Ex.: sem cebola"></label>
+<p class="totals">Subtotal: <b id="subtotal"></b> · Entrega: <b id="fee"></b> · Total: <b id="total"></b></p>
+<button class="button" type="submit">Enviar pedido</button>
+<p id="order-message" class="form-message" role="status"></p>
+</form></section>
+<section class="section" id="acompanhar"><h2>Acompanhar pedido</h2>
+<form id="track-form" class="inline-form"><input name="code" placeholder="Código (LN-XXXXXX)" required><input name="phone" placeholder="Seu celular" inputmode="tel" required><button class="button button-outline" type="submit">Consultar</button></form>
+<p id="track-message" class="form-message" role="status"></p></section>
+</main>
+<footer class="footer"><small>© Lanchonete · <a href="/admin">Painel da loja</a></small></footer>
+</body></html>

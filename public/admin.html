@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Painel da loja</title>
+<link rel="stylesheet" href="/css/styles.css"><script src="/js/admin.js" defer></script></head>
+<body><header class="site-header"><span class="brand">🍔 Painel da loja</span><button class="button hidden" id="logout" type="button">Sair</button></header>
+<div class="admin-wrap">
+<form id="login-form" class="section"><h2>Entrar</h2><label>E-mail<input name="email" type="email" required autocomplete="username"></label><label>Senha<input name="password" type="password" required autocomplete="current-password"></label><button class="button" type="submit">Entrar</button><p id="login-message" class="form-message error"></p></form>
+<div id="panel" class="hidden">
+<div class="row"><label><input type="checkbox" id="store-open"> Loja aberta para pedidos</label><label>Taxa de entrega (R$)<input id="fee-input" type="number" min="0" step="0.5"></label><button class="button button-outline" id="fee-save" type="button">Salvar taxa</button></div>
+<div class="tabs"><button class="button" data-tab="orders" type="button">Pedidos</button><button class="button button-outline" data-tab="products" type="button">Cardápio</button></div>
+<section id="tab-orders"></section><section id="tab-products" class="hidden"></section>
+</div></div></body></html>
