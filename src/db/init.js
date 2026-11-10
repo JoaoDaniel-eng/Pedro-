@@ -1,54 +1,305 @@
+import bcrypt from 'bcryptjs';
 import { getPool } from './pool.js';
-
-const MENU = [
-  ['Lanches', [
-    ['X-Burger', 'Pão, hambúrguer 120g, queijo e molho da casa', 1800],
-    ['X-Salada', 'Hambúrguer, queijo, alface, tomate e maionese', 2000],
-    ['X-Bacon', 'Hambúrguer, queijo, bacon crocante e cheddar', 2600],
-    ['Hot Dog Completo', 'Duas salsichas, purê, batata palha, milho e molho', 1700]
-  ]],
-  ['Porções', [
-    ['Batata Frita', 'Porção para dividir, com sal na medida', 2200],
-    ['Calabresa Acebolada', 'Calabresa fatiada com cebola e pão', 3000]
-  ]],
-  ['Salgados', [
-    ['Coxinha', 'Frango com catupiry, grande', 700],
-    ['Pastel de Carne', 'Massa fina e crocante', 800]
-  ]],
-  ['Bebidas', [
-    ['Refrigerante Lata', '350 ml, gelada', 600],
-    ['Suco Natural', 'Laranja, 400 ml', 900],
-    ['Água', '500 ml', 400]
-  ]]
+const schema = `
+CREATE TABLE IF NOT EXISTS products (
+  id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL, description TEXT NOT NULL DEFAULT '',
+  category VARCHAR(30) NOT NULL DEFAULT 'hamburgers' CHECK(category IN ('hamburgers','pizzas','sides','drinks')),
+  product_type VARCHAR(20) NOT NULL DEFAULT 'traditional' CHECK(product_type IN ('traditional','truffled')),
+  image_url TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE, sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS product_sizes (
+  id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  name VARCHAR(80) NOT NULL, price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
+  active BOOLEAN NOT NULL DEFAULT TRUE, sort_order INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(product_id, name)
+);
+CREATE TABLE IF NOT EXISTS options (
+  id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL, category VARCHAR(30) NOT NULL CHECK(category IN ('topping','syrup','extra','mousse','burger_extra','pizza_extra','side_extra','sauce')),
+  price_cents INTEGER NOT NULL DEFAULT 0 CHECK(price_cents >= 0), active BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INTEGER NOT NULL DEFAULT 0, UNIQUE(name, category)
+);
+CREATE TABLE IF NOT EXISTS delivery_zones (
+  id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL UNIQUE, fee_cents INTEGER NOT NULL CHECK(fee_cents >= 0),
+  active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key VARCHAR(80) PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS customers (
+  id BIGSERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL, phone VARCHAR(15) NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS orders (
+  id BIGSERIAL PRIMARY KEY, customer_id BIGINT REFERENCES customers(id) ON DELETE SET NULL, order_code VARCHAR(20) NOT NULL UNIQUE, customer_name VARCHAR(120) NOT NULL,
+  customer_phone VARCHAR(30) NOT NULL, address TEXT NOT NULL, neighborhood VARCHAR(120) NOT NULL,
+  notes TEXT NOT NULL DEFAULT '', scheduled_for TIMESTAMPTZ, fulfillment VARCHAR(20) NOT NULL DEFAULT 'delivery' CHECK(fulfillment IN ('delivery','pickup')),
+  items JSONB NOT NULL, subtotal_cents INTEGER NOT NULL CHECK(subtotal_cents >= 0), delivery_fee_cents INTEGER NOT NULL CHECK(delivery_fee_cents >= 0),
+  total_cents INTEGER NOT NULL CHECK(total_cents >= 0), status VARCHAR(30) NOT NULL DEFAULT 'new' CHECK(status IN ('new','preparing','out_for_delivery','delivered','cancelled')),
+  whatsapp_opened BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS reviews (
+  id BIGSERIAL PRIMARY KEY, customer_name VARCHAR(100) NOT NULL, rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS admins (
+  id SERIAL PRIMARY KEY, email VARCHAR(255) NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS developers (
+  id SERIAL PRIMARY KEY, email VARCHAR(255) NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS coupons (
+  id SERIAL PRIMARY KEY, code VARCHAR(40) NOT NULL UNIQUE,
+  discount_type VARCHAR(10) NOT NULL CHECK(discount_type IN ('percent','fixed')),
+  discount_value INTEGER NOT NULL CHECK(discount_value > 0),
+  min_subtotal_cents INTEGER NOT NULL DEFAULT 0 CHECK(min_subtotal_cents >= 0),
+  active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status);
+CREATE INDEX IF NOT EXISTS reviews_approved_idx ON reviews(approved, created_at DESC);
+CREATE TABLE IF NOT EXISTS loyalty_points (id BIGSERIAL PRIMARY KEY, order_id BIGINT NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE, customer_phone VARCHAR(30) NOT NULL, points INTEGER NOT NULL CHECK(points >= 0), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS loyalty_phone_idx ON loyalty_points(customer_phone);
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id BIGSERIAL PRIMARY KEY, admin_id INTEGER, admin_email VARCHAR(255) NOT NULL,
+  action VARCHAR(20) NOT NULL, route TEXT NOT NULL, status_code INTEGER NOT NULL,
+  ip_address VARCHAR(120), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit_logs(created_at DESC);
+CREATE TABLE IF NOT EXISTS client_errors (
+  id BIGSERIAL PRIMARY KEY, kind VARCHAR(10) NOT NULL DEFAULT 'tela', message TEXT NOT NULL, source TEXT, line INTEGER, col INTEGER,
+  stack TEXT, page TEXT, build VARCHAR(20), user_agent TEXT, ip_address VARCHAR(120), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS client_errors_created_idx ON client_errors(created_at DESC);
+CREATE TABLE IF NOT EXISTS customer_favorites (
+  id BIGSERIAL PRIMARY KEY, customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  name VARCHAR(60) NOT NULL, size_id INTEGER NOT NULL, option_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS customer_favorites_customer_idx ON customer_favorites(customer_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS inventory_items (
+ id BIGSERIAL PRIMARY KEY, name VARCHAR(140) NOT NULL, unit VARCHAR(20) NOT NULL,
+ quantity NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK(quantity>=0), minimum_quantity NUMERIC(14,3) NOT NULL DEFAULT 0 CHECK(minimum_quantity>=0),
+ unit_cost NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK(unit_cost>=0), option_id INTEGER UNIQUE REFERENCES options(id) ON DELETE SET NULL,
+ active BOOLEAN NOT NULL DEFAULT TRUE, auto_disable BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS inventory_recipes (
+ id BIGSERIAL PRIMARY KEY, inventory_item_id BIGINT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+ size_id INTEGER REFERENCES product_sizes(id) ON DELETE CASCADE, option_id INTEGER REFERENCES options(id) ON DELETE CASCADE,
+ quantity NUMERIC(14,3) NOT NULL CHECK(quantity>0), CHECK ((size_id IS NOT NULL)::int + (option_id IS NOT NULL)::int = 1),
+ UNIQUE(inventory_item_id,size_id,option_id)
+);
+CREATE TABLE IF NOT EXISTS inventory_movements (
+ id BIGSERIAL PRIMARY KEY, inventory_item_id BIGINT NOT NULL REFERENCES inventory_items(id), movement_type VARCHAR(20) NOT NULL,
+ quantity NUMERIC(14,3) NOT NULL CHECK(quantity>0), unit_cost NUMERIC(14,4) NOT NULL DEFAULT 0,
+ reason TEXT, supplier VARCHAR(160), order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+ idempotency_key VARCHAR(180) UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_recipe_size_uidx ON inventory_recipes(inventory_item_id,size_id) WHERE size_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_recipe_option_uidx ON inventory_recipes(inventory_item_id,option_id) WHERE option_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS inventory_movements_item_idx ON inventory_movements(inventory_item_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS inventory_calibrations (
+ id BIGSERIAL PRIMARY KEY, inventory_item_id BIGINT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+ size_id INTEGER REFERENCES product_sizes(id) ON DELETE CASCADE, option_id INTEGER REFERENCES options(id) ON DELETE CASCADE,
+ samples NUMERIC(14,3)[] NOT NULL, average_quantity NUMERIC(14,3) NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), approved_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS cash_sessions (
+  id BIGSERIAL PRIMARY KEY, opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), opened_by VARCHAR(254) NOT NULL,
+  opening_cents INTEGER NOT NULL CHECK(opening_cents >= 0), open_notes TEXT NOT NULL DEFAULT '',
+  closed_at TIMESTAMPTZ, closed_by VARCHAR(254), counted_cents INTEGER CHECK(counted_cents >= 0),
+  expected_cents INTEGER, difference_cents INTEGER, close_notes TEXT NOT NULL DEFAULT '', summary JSONB
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cash_sessions_one_open ON cash_sessions((TRUE)) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS cash_sessions_opened_idx ON cash_sessions(opened_at DESC);
+CREATE TABLE IF NOT EXISTS cash_movements (
+  id BIGSERIAL PRIMARY KEY, session_id BIGINT NOT NULL REFERENCES cash_sessions(id) ON DELETE CASCADE,
+  kind VARCHAR(20) NOT NULL CHECK(kind IN ('suprimento','sangria','despesa')),
+  amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), reason VARCHAR(200) NOT NULL,
+  created_by VARCHAR(254) NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS cash_movements_session_idx ON cash_movements(session_id,created_at);
+`;
+const products = [
+  // Cardápio demonstrativo: preços iniciais editáveis no painel administrativo.
+  { category: 'hamburgers', name: 'Bunker Clássico', description: 'Pão brioche, hambúrguer bovino 150 g, queijo, alface, tomate e molho da casa.', sizes: [['Simples', 2490], ['Duplo', 3290]] },
+  { category: 'hamburgers', name: 'Bacon Rebellado', description: 'Pão brioche, hambúrguer bovino 150 g, queijo cheddar, bacon crocante e molho especial.', sizes: [['Simples', 2890], ['Duplo', 3690]] },
+  { category: 'hamburgers', name: 'Chicken Crispy', description: 'Frango empanado crocante, queijo, alface e maionese temperada.', sizes: [['Único', 2390]] },
+  { category: 'hamburgers', name: 'Veggie Bunker', description: 'Burger vegetal, queijo, alface, tomate e molho da casa.', sizes: [['Único', 2590]] },
+  { category: 'pizzas', name: 'Pizza Mussarela', description: 'Molho de tomate, mussarela e orégano.', sizes: [['Broto', 2990], ['Média', 4290], ['Grande', 5290]] },
+  { category: 'pizzas', name: 'Pizza Calabresa', description: 'Molho de tomate, mussarela, calabresa fatiada e cebola.', sizes: [['Broto', 3290], ['Média', 4590], ['Grande', 5590]] },
+  { category: 'pizzas', name: 'Pizza Frango com Catupiry', description: 'Frango desfiado, mussarela e requeijão cremoso.', sizes: [['Broto', 3590], ['Média', 4990], ['Grande', 5990]] },
+  { category: 'pizzas', name: 'Pizza Portuguesa', description: 'Presunto, ovos, cebola, ervilha, mussarela e azeitona.', sizes: [['Broto', 3590], ['Média', 4990], ['Grande', 5990]] },
+  { category: 'sides', name: 'Batata Frita', description: 'Porção de batatas crocantes.', sizes: [['Individual', 1490], ['Grande', 2290]] },
+  { category: 'sides', name: 'Batata Cheddar e Bacon', description: 'Batata frita coberta com cheddar cremoso e bacon.', sizes: [['Individual', 2190], ['Grande', 2990]] },
+  { category: 'sides', name: 'Nuggets', description: 'Pedaços de frango empanados e crocantes.', sizes: [['6 unidades', 1590], ['10 unidades', 2290]] },
+  { category: 'sides', name: 'Onion Rings', description: 'Anéis de cebola empanados.', sizes: [['Porção', 1790]] },
+  { category: 'drinks', name: 'Coca-Cola Lata', description: 'Refrigerante lata 350 ml.', sizes: [['350 ml', 650]] },
+  { category: 'drinks', name: 'Guaraná Lata', description: 'Refrigerante lata 350 ml.', sizes: [['350 ml', 600]] },
+  { category: 'drinks', name: 'Suco de Laranja', description: 'Suco de laranja.', sizes: [['300 ml', 900], ['500 ml', 1300]] },
+  { category: 'drinks', name: 'Água Mineral', description: 'Água mineral sem gás.', sizes: [['500 ml', 400]] }
 ];
-
+const options = [
+  ...[['Bacon extra', 500], ['Queijo cheddar', 400], ['Queijo mussarela', 350], ['Ovo', 250], ['Hambúrguer extra 150 g', 900], ['Cebola caramelizada', 300], ['Picles', 200], ['Molho especial', 200]].map(([name, price], i) => ({ name, category: 'burger_extra', price, sort: i })),
+  ...[['Borda de Catupiry', 1200], ['Borda de Cheddar', 1200], ['Bacon', 700], ['Azeitona', 300], ['Milho', 300], ['Extra mussarela', 800]].map(([name, price], i) => ({ name, category: 'pizza_extra', price, sort: i })),
+  ...[['Cheddar', 400], ['Bacon', 500], ['Maionese temperada', 200], ['Barbecue', 200], ['Ketchup', 0], ['Mostarda', 0]].map(([name, price], i) => ({ name, category: 'side_extra', price, sort: i })),
+  ...[['Maionese verde', 200], ['Molho barbecue', 200], ['Molho da casa', 200]].map(([name, price], i) => ({ name, category: 'sauce', price, sort: i }))
+];
+// Taxas provisórias por faixas de distância a partir do Cruzeiro (Vale do Paquequer).
+// A lista foi reduzida para bairros próximos; confirme a distância pela rota antes de ativar vendas.
+const zones = [
+  ['Cruzeiro', 500],
+  ['Pessegueiros', 1000], ['Andradas', 1000], ['Santa Rita', 1000], ['Campo Limpo', 1000],
+  ['Providência', 1500], ['Ponte Nova', 1500], ['Granja Mafra', 1500]
+];
 export async function initializeDatabase() {
   const db = getPool();
+  await db.query(schema);
+  await db.query('DROP TABLE IF EXISTS admin_login_attempts');
+  // Momento da última troca de senha: tokens emitidos antes dela deixam de valer (ver services/sessionVersion.js).
+  await db.query('ALTER TABLE admins ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ');
+  await db.query('ALTER TABLE developers ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ');
+  // Auditoria compartilhada: 'admin' (painel da loja) ou 'dev' (painel do desenvolvedor). Linhas antigas viram 'admin'.
+  await db.query("ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS actor VARCHAR(10) NOT NULL DEFAULT 'admin'");
+  await db.query("ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type VARCHAR(20) NOT NULL DEFAULT 'traditional'");
+  await db.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT');
+  await db.query("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(30) NOT NULL DEFAULT 'hamburgers'");
+  await db.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='products'::regclass AND conname='products_category_check') THEN ALTER TABLE products ADD CONSTRAINT products_category_check CHECK(category IN ('hamburgers','pizzas','sides','drinks')); END IF; END $$`);
+  // Expande as categorias de adicionais sem apagar opções antigas nem afetar pedidos já registrados.
+  await db.query(`DO $$ DECLARE c RECORD; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='options'::regclass AND contype='c' AND pg_get_constraintdef(oid) ILIKE '%category%' LOOP EXECUTE format('ALTER TABLE options DROP CONSTRAINT %I', c.conname); END LOOP; END $$`);
+  await db.query("ALTER TABLE options ADD CONSTRAINT options_category_check CHECK(category IN ('topping','syrup','extra','mousse','burger_extra','pizza_extra','side_extra','sauce'))");
+  await db.query('ALTER TABLE reviews ADD COLUMN IF NOT EXISTS photo TEXT');
+  // Fotos novas ficam no armazenamento de arquivos (Cloudinary); o banco guarda só o endereço.
+  await db.query('ALTER TABLE reviews ADD COLUMN IF NOT EXISTS photo_url TEXT');
+  await db.query('ALTER TABLE reviews ADD COLUMN IF NOT EXISTS photo_public_id TEXT');
+  await db.query('ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchase_total NUMERIC(14,2) NOT NULL DEFAULT 0');
+  await db.query('ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS capacity_quantity NUMERIC(14,3) NOT NULL DEFAULT 0');
+  await db.query('UPDATE inventory_items SET capacity_quantity=quantity WHERE capacity_quantity=0 AND quantity>0');
+  await db.query('ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS consumption_quantity NUMERIC(14,3)');
+  await db.query('ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS consumption_unit VARCHAR(10)');
+  await db.query('ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(14,4) NOT NULL DEFAULT 0');
+  await db.query('ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS reason TEXT');
+  await db.query('ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS supplier VARCHAR(160)');
+  await db.query('ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL');
+  await db.query('ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(180)');
+  await db.query('CREATE UNIQUE INDEX IF NOT EXISTS inventory_movements_idempotency_uidx ON inventory_movements(idempotency_key) WHERE idempotency_key IS NOT NULL');
+  // Vincula automaticamente itens cujo nome corresponde exatamente a um acompanhamento existente.
+  await db.query(`WITH candidates AS (
+    SELECT DISTINCT ON (o.id) i.id AS item_id,o.id AS option_id
+    FROM inventory_items i JOIN options o ON LOWER(TRIM(i.name))=LOWER(TRIM(o.name))
+    WHERE i.active=true AND i.option_id IS NULL AND NOT EXISTS (SELECT 1 FROM inventory_items x WHERE x.option_id=o.id)
+    ORDER BY o.id,i.id
+  ) UPDATE inventory_items i SET option_id=c.option_id,auto_disable=TRUE FROM candidates c WHERE i.id=c.item_id`);
+  // Consolida produtos duplicados criados por inicializações anteriores.
+  // Mantém o produto mais antigo e transfere tamanhos que ainda não existam nele.
   await db.query(`
-    CREATE TABLE IF NOT EXISTS categories (id SERIAL PRIMARY KEY, name TEXT NOT NULL, sort INT NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS products (
-      id SERIAL PRIMARY KEY, category_id INT NOT NULL REFERENCES categories(id),
-      name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', price_cents INT NOT NULL CHECK (price_cents >= 0),
-      image TEXT, available BOOLEAN NOT NULL DEFAULT TRUE, sort INT NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS orders (
-      id SERIAL PRIMARY KEY, code TEXT UNIQUE NOT NULL, customer_name TEXT NOT NULL, phone TEXT NOT NULL,
-      type TEXT NOT NULL CHECK (type IN ('entrega','retirada')), address TEXT, payment TEXT NOT NULL, notes TEXT,
-      subtotal_cents INT NOT NULL, delivery_fee_cents INT NOT NULL, total_cents INT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'novo', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
-    CREATE TABLE IF NOT EXISTS order_items (
-      id SERIAL PRIMARY KEY, order_id INT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-      product_id INT REFERENCES products(id) ON DELETE SET NULL, name TEXT NOT NULL,
-      qty INT NOT NULL CHECK (qty BETWEEN 1 AND 20), unit_price_cents INT NOT NULL, notes TEXT);
-    CREATE INDEX IF NOT EXISTS orders_created_idx ON orders (created_at DESC);
-    INSERT INTO settings (key, value) VALUES ('delivery_fee_cents', '500'), ('store_open', 'true')
-      ON CONFLICT (key) DO NOTHING;
+    WITH ranked_products AS (
+      SELECT id,
+             FIRST_VALUE(id) OVER (PARTITION BY LOWER(TRIM(name)) ORDER BY id) AS keeper_id
+      FROM products
+    )
+    INSERT INTO product_sizes(product_id, name, price_cents, active, sort_order)
+    SELECT rp.keeper_id, ps.name, ps.price_cents, ps.active, ps.sort_order
+    FROM product_sizes ps
+    JOIN ranked_products rp ON rp.id = ps.product_id
+    WHERE rp.id <> rp.keeper_id
+    ON CONFLICT(product_id, name) DO NOTHING
   `);
-  const { rows } = await db.query('SELECT 1 FROM products LIMIT 1');
-  if (rows.length) return;
-  for (const [ci, [category, items]] of MENU.entries()) {
-    const cat = await db.query('INSERT INTO categories (name, sort) VALUES ($1,$2) RETURNING id', [category, ci]);
-    for (const [pi, [name, description, price]] of items.entries())
-      await db.query('INSERT INTO products (category_id, name, description, price_cents, sort) VALUES ($1,$2,$3,$4,$5)', [cat.rows[0].id, name, description, price, pi]);
+  await db.query(`
+    WITH ranked_products AS (
+      SELECT id,
+             FIRST_VALUE(id) OVER (PARTITION BY LOWER(TRIM(name)) ORDER BY id) AS keeper_id
+      FROM products
+    )
+    DELETE FROM products p
+    USING ranked_products rp
+    WHERE p.id = rp.id AND rp.id <> rp.keeper_id
+  `);
+  await db.query('CREATE UNIQUE INDEX IF NOT EXISTS products_name_normalized_uidx ON products (LOWER(TRIM(name)))');
+  // Compatibilidade com bancos já existentes: adiciona a forma de pagamento sem apagar pedidos.
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_id BIGINT REFERENCES customers(id) ON DELETE SET NULL");
+  // Estoque por unidade (trufados): NULL = sem controle. O pedido guarda o que reservou para devolver no cancelamento.
+  await db.query('ALTER TABLE product_sizes ADD COLUMN IF NOT EXISTS stock_quantity INTEGER CHECK (stock_quantity IS NULL OR stock_quantity >= 0)');
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS unit_stock JSONB NOT NULL DEFAULT '{}'::jsonb");
+  await db.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
+  await db.query("ALTER TABLE customers ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(40) NOT NULL DEFAULT 'A combinar'");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS change_for VARCHAR(30)");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code VARCHAR(40)");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_cents INTEGER NOT NULL DEFAULT 0");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS combo_discount_cents INTEGER NOT NULL DEFAULT 0");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes_min INTEGER NOT NULL DEFAULT 35");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_minutes_max INTEGER NOT NULL DEFAULT 55");
+  // Colher: spoon_quantity = quantas colheres o cliente pediu; spoon_cents = quanto foi cobrado; needs_spoon = quantidade > 0.
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS needs_spoon BOOLEAN NOT NULL DEFAULT FALSE");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS spoon_cents INTEGER NOT NULL DEFAULT 0");
+  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS spoon_quantity INTEGER NOT NULL DEFAULT 0");
+  // Retirada na loja: bancos antigos só aceitavam 'delivery'. Troca a regra uma única vez (só se ainda for a antiga).
+  await db.query(`DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='orders'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%fulfillment%' AND pg_get_constraintdef(oid) NOT LIKE '%pickup%') THEN
+      ALTER TABLE orders DROP CONSTRAINT orders_fulfillment_check;
+      ALTER TABLE orders ADD CONSTRAINT orders_fulfillment_check CHECK(fulfillment IN ('delivery','pickup'));
+    END IF;
+  END $$`);
+  // Pedidos feitos quando a colher era só Sim/Não (1 colher) passam a ter quantidade 1.
+  await db.query("UPDATE orders SET spoon_quantity=1 WHERE needs_spoon AND spoon_quantity=0");
+  // Cupom de boas-vindas (5% na primeira compra, uso único): fica na tabela coupons, ligado a uma conta de cliente.
+  // used_order_id é só um número (sem chave estrangeira) para o backup poder restaurar cupons antes dos pedidos.
+  await db.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'manual'");
+  await db.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE");
+  await db.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ");
+  await db.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS used_order_id BIGINT");
+  await db.query("CREATE UNIQUE INDEX IF NOT EXISTS coupons_one_welcome_per_customer_uidx ON coupons(customer_id) WHERE kind='welcome'");
+  for (const [key, value] of Object.entries({
+    manual_closed: 'false', store_name: 'Bunker Rebellados', whatsapp_number: process.env.WHATSAPP_NUMBER || '5521969081157',
+    timezone: 'America/Sao_Paulo', opening_days: '2,3,4,5,6,0', opening_time: '13:30', closing_time: '22:00',
+    minimum_schedule_minutes: '30', max_free_toppings: '5', combo_min_items: '2', combo_discount_percent: '0', free_delivery_min: '0', estimated_minutes_min: '35', estimated_minutes_max: '55'
+  }))
+    await db.query('INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING', [key, value]);
+  // A loja não quer o desconto de combo: desliga uma única vez (0%). Se ela quiser religar depois, é só definir no painel: esta regra não roda de novo.
+  const comboOff = await db.query("INSERT INTO settings(key,value) VALUES('combo_disabled_v1','1') ON CONFLICT(key) DO NOTHING RETURNING key");
+  if (comboOff.rowCount)
+    await db.query("UPDATE settings SET value='0' WHERE key='combo_discount_percent'");
+  // Desativa o catálogo antigo de açaí; registros de pedidos anteriores permanecem intactos.
+  await db.query("UPDATE options SET active=FALSE WHERE category IN ('topping','syrup','extra','mousse')");
+  await db.query("UPDATE products SET active=FALSE WHERE name ILIKE '%açaí%' OR name ILIKE '%acai%' OR product_type='truffled'");
+  for (const [index, product] of products.entries()) {
+    let productId = (await db.query('SELECT id FROM products WHERE LOWER(TRIM(name))=LOWER(TRIM($1)) ORDER BY id LIMIT 1', [product.name])).rows[0]?.id;
+    if (!productId)
+      productId = (await db.query('INSERT INTO products(name,description,category,product_type,sort_order) VALUES($1,$2,$3,\'traditional\',$4) RETURNING id', [product.name, product.description, product.category, index])).rows[0].id;
+    else
+      await db.query('UPDATE products SET description=$1,category=$2,active=TRUE WHERE id=$3', [product.description, product.category, productId]);
+    for (const [sizeIndex, [name, price]] of product.sizes.entries())
+      await db.query('INSERT INTO product_sizes(product_id,name,price_cents,sort_order) VALUES($1,$2,$3,$4) ON CONFLICT(product_id,name) DO NOTHING', [productId, name, price, sizeIndex]);
   }
+  for (const item of options)
+    await db.query('INSERT INTO options(name,category,price_cents,sort_order) VALUES($1,$2,$3,$4) ON CONFLICT(name,category) DO NOTHING', [item.name, item.category, item.price, item.sort]);
+  // Desativa zonas antigas de demonstração que não pertencem à área de entrega solicitada.
+  await db.query("UPDATE delivery_zones SET active=FALSE WHERE name = ANY($1::text[])", [['Centro', 'Alto', 'Várzea', 'Agriões', 'Barra do Imbuí']]);
+  // Bairros iniciais só entram em banco novo (tabela vazia). Depois disso o painel manda: taxas editadas,
+  // bairros desativados e bairros excluídos não voltam ao padrão a cada reinício ou deploy.
+  if (!(await db.query('SELECT 1 FROM delivery_zones LIMIT 1')).rowCount)
+    for (const [name, fee] of zones)
+      await db.query('INSERT INTO delivery_zones(name,fee_cents) VALUES($1,$2) ON CONFLICT(name) DO NOTHING', [name, fee]);
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+    await db.query('INSERT INTO admins(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING', [process.env.ADMIN_EMAIL.toLowerCase(), hash]);
+  }
+  // Conta do desenvolvedor (painel /dev): vem só das variáveis DEV_EMAIL e DEV_PASSWORD. Trocar a senha na variável atualiza a conta.
+  if (process.env.DEV_EMAIL && process.env.DEV_PASSWORD) {
+    const devEmail = process.env.DEV_EMAIL.trim().toLowerCase();
+    if (process.env.DEV_PASSWORD.length < 10)
+      console.warn('DEV_PASSWORD precisa ter pelo menos 10 caracteres: conta do desenvolvedor não criada.');
+    else {
+      const current = (await db.query('SELECT password_hash FROM developers WHERE email=$1', [devEmail])).rows[0];
+      if (!current)
+        await db.query('INSERT INTO developers(email,password_hash) VALUES($1,$2)', [devEmail, await bcrypt.hash(process.env.DEV_PASSWORD, 12)]);
+      else if (!(await bcrypt.compare(process.env.DEV_PASSWORD, current.password_hash)))
+        await db.query('UPDATE developers SET password_hash=$2, password_changed_at=NOW() WHERE email=$1', [devEmail, await bcrypt.hash(process.env.DEV_PASSWORD, 12)]);
+    }
+  }
+  console.log('Banco de dados inicializado.');
 }
