@@ -7,7 +7,15 @@ const app = createApp();
 async function start() {
   try {
     // O Bunker usa uma variável exclusiva para evitar conexão acidental ao banco do Açaí da Roça.
-    getBunkerDatabaseUrl();
+    const bunkerUrl = getBunkerDatabaseUrl();
+    // Trava de segurança: se o serviço ainda tiver DATABASE_URL (antiga, do Açaí) igual à do Bunker,
+    // os dois sites compartilhariam o mesmo banco. Nesse caso o servidor não inicia.
+    const legacyUrl = process.env.DATABASE_URL?.trim();
+    if (legacyUrl) {
+      if (legacyUrl === bunkerUrl)
+        throw new Error('DATABASE_URL e BUNKER_DATABASE_URL são iguais. O Bunker precisa de um banco exclusivo; remova DATABASE_URL e use outro banco.');
+      console.warn('[Bunker] Aviso: DATABASE_URL existe neste serviço e é ignorada. Remova-a para evitar confusão com o Açaí.');
+    }
     await initializeDatabase();
     // Registra apenas a identidade lógica do banco (nunca a URL ou senha), para facilitar
     // a conferência no log do provedor e detectar serviço apontando para a base errada.
