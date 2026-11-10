@@ -7,21 +7,23 @@ Aplicação full-stack para uma lanchonete, com frontend em HTML/CSS/JavaScript 
 - PostgreSQL (local ou hospedado, por exemplo Neon)
 - Conta de hospedagem Node.js (por exemplo Render)
 
+> **Banco independente:** este projeto usa exclusivamente `BUNKER_DATABASE_URL`. Configure nela a connection string do banco criado para o Bunker Rebellados. Não copie a URL do Açaí da Roça e não configure `DATABASE_URL` como substituta. Se `BUNKER_DATABASE_URL` estiver ausente, o servidor encerra a inicialização em vez de operar sem banco ou conectar a uma base compartilhada.
+
 ## Executar localmente
 1. Instale Node.js 20+ e tenha um banco PostgreSQL criado.
-2. Crie um arquivo local chamado `.env` na pasta principal e preencha `NODE_ENV`, `PORT`, `DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER`. Copie o `.env.example` (só nomes de variáveis, sem valores) para `.env` e preencha; mantenha o `.env` fora do ZIP e do repositório.
+2. Crie um arquivo local chamado `.env` na pasta principal e preencha `NODE_ENV`, `PORT`, `BUNKER_DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER`. Copie o `.env.example` (só nomes de variáveis, sem valores) para `.env` e preencha; mantenha o `.env` fora do ZIP e do repositório.
 3. Na pasta do projeto, execute `npm install`.
 4. Execute `npm start` (ou `npm run dev` durante o desenvolvimento).
 5. Abra `http://localhost:3000`. O painel da loja fica em `http://localhost:3000/admin` e o painel do desenvolvedor em `http://localhost:3000/dev`.
 6. Rode os testes com `npm test`.
 
-O schema e os dados iniciais são criados de forma idempotente quando o servidor inicia e `DATABASE_URL` está configurada. O usuário administrativo inicial é criado se `ADMIN_EMAIL` e `ADMIN_PASSWORD` estiverem definidos antes da primeira inicialização. Se já existir um administrador com o mesmo e-mail, a senha não é sobrescrita automaticamente.
+O schema e os dados iniciais são criados de forma idempotente quando o servidor inicia e `BUNKER_DATABASE_URL` está configurada. O usuário administrativo inicial é criado se `ADMIN_EMAIL` e `ADMIN_PASSWORD` estiverem definidos antes da primeira inicialização. Se já existir um administrador com o mesmo e-mail, a senha não é sobrescrita automaticamente.
 
 ## Deploy no Render + Neon
 1. Crie um banco PostgreSQL no Neon e copie a connection string (use SSL).
 2. Publique esta pasta em um repositório Git, ou use o método de deploy aceito pelo seu serviço de hospedagem.
 3. No Render, crie um Web Service com ambiente Node. Build command: `npm install`. Start command: `npm start`.
-4. Cadastre as variáveis `NODE_ENV=production`, `DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER` no painel do Render. Não envie `.env` ao repositório.
+4. Cadastre as variáveis `NODE_ENV=production`, `BUNKER_DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `DEV_EMAIL`, `DEV_PASSWORD` e `WHATSAPP_NUMBER` no painel do Render. Não envie `.env` ao repositório.
 5. Faça o deploy e confira `/api/health`. Para monitorar também o banco (ex.: UptimeRobot), use `/api/health/db`; não o configure como health check do Render, porque o Neon suspende o banco quando ocioso e a primeira consulta pode demorar.
 6. Configure o domínio personalizado nas configurações do serviço e siga as instruções de DNS fornecidas pelo Render. Para domínio `.com.br`, o registro e a renovação são feitos pelo registrador escolhido.
 

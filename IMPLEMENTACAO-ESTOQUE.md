@@ -27,7 +27,7 @@
 - Ao cancelar um pedido que já teve baixa, a quantidade é devolvida e a movimentação de devolução fica registrada. Cancelar antes de iniciar a produção não altera o estoque.
 
 ## Banco e compatibilidade
-A inicialização adiciona colunas `capacity_quantity`, `purchase_total`, `consumption_quantity` e `consumption_unit` à tabela `inventory_items`, sem apagar itens ou movimentos. Itens antigos com nome igual ao de uma opção do cardápio recebem vínculo automático quando disponível. O projeto continua usando `DATABASE_URL`/PostgreSQL existente e mantém compatibilidade com Render.
+A inicialização adiciona colunas `capacity_quantity`, `purchase_total`, `consumption_quantity` e `consumption_unit` à tabela `inventory_items`, sem apagar itens ou movimentos. Itens antigos com nome igual ao de uma opção do cardápio recebem vínculo automático quando disponível. O projeto continua usando `BUNKER_DATABASE_URL`/PostgreSQL exclusivo do Bunker e mantém compatibilidade com Render.
 
 ## Antes de produção
 Publicar primeiro em ambiente de homologação com Neon e testar cadastro, conversões, ajuste de saldo, pedido com e sem acompanhamento, pedidos simultâneos e cancelamento após a baixa. Os testes locais automatizados não substituem esse teste integrado.

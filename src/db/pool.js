@@ -2,17 +2,26 @@ import pg from 'pg';
 const { Pool } = pg;
 let pool;
 const isLocalUrl = url => url.includes('localhost') || url.includes('127.0.0.1');
+export function getBunkerDatabaseUrl() {
+  const url = process.env.BUNKER_DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(
+      'BUNKER_DATABASE_URL não configurada. Defina a URL exclusiva do PostgreSQL do Bunker Rebellados; não reutilize a URL do Açaí da Roça.'
+    );
+  }
+  return url;
+}
+
 export function getPool() {
-  if (!process.env.DATABASE_URL)
-    throw new Error('DATABASE_URL não configurada.');
+  const databaseUrl = getBunkerDatabaseUrl();
   if (!pool) {
     // Conexões remotas (Neon etc.) usam SSL COM verificação do certificado.
     // Só se o provedor usar certificado próprio é que se define DATABASE_SSL_INSECURE=true (não recomendado).
-    const ssl = isLocalUrl(process.env.DATABASE_URL)
+    const ssl = isLocalUrl(databaseUrl)
       ? false
       : { rejectUnauthorized: process.env.DATABASE_SSL_INSECURE !== 'true' };
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: databaseUrl,
       ssl,
       max: 10,
       idleTimeoutMillis: 30000,

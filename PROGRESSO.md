@@ -400,3 +400,15 @@
 - PostgreSQL real, compra ponta a ponta, impressão física e validação visual em navegadores/dispositivos permanecem pendentes; não foram simulados como se estivessem aprovados.
 - Referências internas a açaí/trufados foram preservadas quando ligadas a compatibilidade histórica, estoque antigo ou testes. Remoção automática poderia afetar pedidos históricos. O arquivo `public/js/app.js` é legado e não é carregado pela página principal modular.
 - Detalhes, limitações e checklist de publicação registrados em `REVISAO-FINAL-PARTE8.md`.
+
+
+## Isolamento do banco do Bunker (10/11/2026)
+- [x] Conexão PostgreSQL do Bunker isolada na variável obrigatória `BUNKER_DATABASE_URL`.
+- [x] `DATABASE_URL` genérica não é mais utilizada pelo servidor do Bunker.
+- [x] Inicialização interrompida com mensagem explícita quando `BUNKER_DATABASE_URL` não estiver configurada, para evitar alterações em uma base incorreta.
+- [x] README atualizado com instruções de configuração da URL exclusiva.
+- [ ] No provedor de hospedagem, cadastrar `BUNKER_DATABASE_URL` com a nova connection string gerada para o Bunker e realizar novo deploy.
+- [ ] Confirmar que a URL do serviço Açaí da Roça continua apontando exclusivamente para o banco dele.
+- [ ] Fazer um teste de criação/edição/exclusão de produto no Bunker e confirmar que o catálogo do Açaí permanece intacto.
+
+**Atenção:** o código não contém nem recebe credenciais do banco. A URL deve ser cadastrada como variável secreta no painel da hospedagem, não enviada em chat, ZIP ou repositório.
