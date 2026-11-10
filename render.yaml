@@ -1,0 +1,26 @@
+# Bunker Rebellados — Render Web Service + banco PostgreSQL externo no Neon.
+services:
+  - type: web
+    name: bunker-rebellados
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BUNKER_DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DEV_EMAIL
+        sync: false
+      - key: DEV_PASSWORD
+        sync: false
+      - key: WHATSAPP_NUMBER
+        sync: false
