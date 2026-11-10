@@ -3,6 +3,7 @@ const APP_SHELL = [
   '/',
   '/index.html',
   '/css/styles.css?v=20261110-parte8-revisao',
+  '/css/theme-vendas.css?v=20261110-parte8-revisao',
   '/js/diagnostics.js?v=20261105-ignora-externos',
   '/js/site/core.js?v=20261110-parte8-revisao',
   '/js/site/checkout.js?v=20261110-parte8-revisao',
