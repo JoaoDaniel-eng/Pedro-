@@ -1,0 +1,618 @@
+// Carregamento do cardápio, carrinho, cupom, envio do pedido, passo do WhatsApp e Pix.
+async function load() {
+  try {
+    [store, menu] = await Promise.all([api('/store'), api('/menu')]);
+    $('#store-status').textContent = store.openNow ? '🟢 Aberto para pedidos imediatos · ' + store.openingTime + ' às ' + store.closingTime : '🟣 No momento estamos fechados para pedidos imediatos. Você pode agendar.';
+    paintStoreBanner();
+    $('#delivery-estimate').textContent = `Previsão estimada: ${store.estimatedMinutesMin} a ${store.estimatedMinutesMax} minutos após a confirmação.`;
+    if (!menu.products.length)
+      throw new Error('O cardápio está indisponível.');
+    const categories = ['hamburgers','pizzas','sides','drinks'];
+    const available = categories.filter(category => menu.products.some(p => p.category === category && p.type !== 'truffled' && p.sizes?.length));
+    if (!available.length) throw new Error('Nenhum produto disponível no cardápio.');
+    activeMenuCategory = available.includes('hamburgers') ? 'hamburgers' : available[0];
+    const firstProduct = menu.products.find(p => p.category === activeMenuCategory && p.sizes?.length);
+    selectedSize = firstProduct?.sizes.find(size => !size.soldOut) || firstProduct?.sizes[0] || null;
+    $('#menu-status').classList.add('hidden');
+    $('#builder').classList.remove('hidden');
+    $('#menu-category-tabs').classList.remove('hidden');
+    document.querySelectorAll('[data-menu-category]').forEach(button => {
+      const active = button.dataset.menuCategory === activeMenuCategory;
+      button.classList.toggle('button-primary', active); button.classList.toggle('button-outline', !active);
+      button.setAttribute('aria-selected', String(active));
+      button.classList.toggle('hidden', !available.includes(button.dataset.menuCategory));
+    });
+    $('.builder-main').classList.remove('hidden');
+    $('#truffled-menu').classList.add('hidden');
+    renderBuilder();
+    updateZones();
+    restoreSavedDetails();
+    restoreCart();
+    renderCart();
+    renderFavorites();
+    paintCartNote();
+    syncOrderTimeOptions();
+    showPendingWhatsappBanner();
+  }
+  catch (e) {
+    $('#menu-status').textContent = e.message + ' Confira a configuração do banco de dados e tente novamente.';
+    $('#menu-status').classList.add('error-message');
+  }
+  await loadReviews();
+}
+// Aviso de estoque por unidade no card do sabor: esgotado em todos os tamanhos, ou algum tamanho nas últimas unidades.
+function truffleFlavorBadge(p) {
+  if (p.sizes.every(size => size.soldOut)) return '<em class="stock-badge stock-badge-out">Esgotado</em>';
+  if (p.sizes.some(size => size.stockLabel && !size.soldOut)) return '<em class="stock-badge">🔥 Últimas unidades!</em>';
+  return '';
+}
+function renderTruffledMenu() {
+  const products = menu.products.filter(p => p.type === 'truffled' && Array.isArray(p.sizes) && p.sizes.length);
+  $('#truffled-flavors').innerHTML = products.map(p => `<button type="button" class="truffled-flavor-card ${selectedTruffleProduct?.id === p.id ? 'chosen' : ''}" data-truffle-flavor="${p.id}">${truffleFlavorBadge(p)}${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">` : ''}<strong>${esc(p.name)}</strong><span>Escolher tamanho →</span></button>`).join('');
+  if (!products.length) $('#truffled-flavors').innerHTML = '<p class="muted">Nenhuma opção especial disponível no momento.</p>';
+}
+function renderTruffledSizes() {
+  const panel = $('#truffled-sizes');
+  if (!selectedTruffleProduct || !Array.isArray(selectedTruffleProduct.sizes) || !selectedTruffleProduct.sizes.length) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  panel.innerHTML = `<h3>${esc(selectedTruffleProduct.name)}</h3><p class="muted">Agora escolha o tamanho:</p><div class="size-grid">${selectedTruffleProduct.sizes.map(size => `<button type="button" class="size-card ${size.soldOut ? 'sold-out' : ''}" data-truffle-size="${size.id}" ${size.soldOut ? 'disabled' : ''}><span>${esc(size.name)}</span><strong>${size.soldOut ? 'Esgotado' : brl(size.price)}</strong>${size.stockLabel && !size.soldOut ? `<em class="stock-badge">${esc(size.stockLabel)}</em>` : ''}</button>`).join('')}</div><p class="form-message" id="truffle-message" role="status"></p>`;
+}
+function truffleMessage(text) {
+  const m = $('#truffle-message');
+  if (!m) return;
+  m.textContent = text || '';
+  m.classList.toggle('error-message', !!text);
+}
+// Depois de um pedido recusado por falta de unidade, atualiza só os trufados (os demais produtos ficam como estão, para não mexer no montador).
+async function refreshTruffleStock() {
+  try {
+    const fresh = await api('/menu');
+    menu.products = menu.products.map(p => p.type === 'truffled' ? (fresh.products.find(f => f.id === p.id) || p) : p);
+    if (selectedTruffleProduct) selectedTruffleProduct = menu.products.find(p => p.id === selectedTruffleProduct.id) || null;
+    renderTruffledMenu(); renderTruffledSizes();
+  }
+  catch { /* sem rede: o servidor continua conferindo na hora do pedido */ }
+}
+document.addEventListener('click', e => {
+  const category = e.target.closest('[data-menu-category]');
+  if (category) {
+    activeMenuCategory = category.dataset.menuCategory;
+    document.querySelectorAll('[data-menu-category]').forEach(b => {
+      const active = b === category;
+      b.classList.toggle('button-primary', active);
+      b.classList.toggle('button-outline', !active);
+      b.setAttribute('aria-selected', String(active));
+    });
+    // Fecha a linha que estava sendo montada: ela permanece no carrinho como item independente.
+    draftItem = null; selected.clear(); selectedLayers.clear(); selectedSize = null;
+    const product = menu.products.find(p => p.category === activeMenuCategory && p.type !== 'truffled' && p.sizes?.length);
+    selectedSize = product?.sizes.find(size => !size.soldOut) || product?.sizes[0] || null;
+    $('.builder-main').classList.remove('hidden'); $('#truffled-menu').classList.add('hidden');
+    renderBuilder(); syncDraft();
+    return;
+  }
+  const flavor = e.target.closest('[data-truffle-flavor]');
+  if (flavor) {
+    selectedTruffleProduct = menu.products.find(p => p.id === Number(flavor.dataset.truffleFlavor));
+    renderTruffledMenu(); renderTruffledSizes(); return;
+  }
+  const truffleSize = e.target.closest('[data-truffle-size]');
+  if (truffleSize && selectedTruffleProduct) {
+    const size = selectedTruffleProduct.sizes.find(x => x.id === Number(truffleSize.dataset.truffleSize));
+    if (!size || size.soldOut) return;
+    const quantity = Number($('#builder-quantity')?.value || 1);
+    // Estoque por unidade: não deixa o carrinho passar do que a loja tem (o servidor confere de novo ao fechar o pedido).
+    if (size.stock !== null && size.stock !== undefined) {
+      const inCart = cart.filter(item => item.sizeId === size.id).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      if (inCart + quantity > size.stock) {
+        truffleMessage(inCart ? `Você já tem ${inCart} no pedido e só temos ${size.stock} unidade${size.stock === 1 ? '' : 's'} desse tamanho.` : `Só temos ${size.stock} unidade${size.stock === 1 ? '' : 's'} desse tamanho. Diminua a quantidade.`);
+        return;
+      }
+    }
+    truffleMessage('');
+    cart.push({ sizeId: size.id, product: selectedTruffleProduct.name, size: size.name, quantity, optionIds: [], options: [], unitPriceCents: Number(size.price), lineTotalCents: Number(size.price) * quantity });
+    appliedCoupon = null; $('#coupon-message').textContent = ''; renderCart();
+    $('#pedido').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target.matches('[data-size]')) {
+    selectedSize = menu.products.flatMap(p => p.sizes || []).find(s => Number(s.id) === Number(e.target.dataset.size));
+    renderBuilder();
+    syncDraft();
+  }
+  if (e.target.matches('[data-option]')) {
+    builderMessage('');
+    const id = Number(e.target.dataset.option), opt = menu.options.find(o => o.id === id);
+    if (e.target.checked) {
+      if (opt.category === 'syrup') {
+        menu.options.filter(o => o.category === 'syrup').forEach(o => selected.delete(o.id));
+      }
+      if (opt.category === 'topping' && [...selected].filter(i => menu.options.find(o => o.id === i)?.category === 'topping').length >= store.maxFreeToppings) {
+        e.target.checked = false;
+        builderMessage(`Você pode escolher até ${store.maxFreeToppings} acompanhamentos grátis.`);
+        return;
+      }
+      selected.add(id);
+      if (isLayered(opt))
+        selectedLayers.set(id, 1);
+    }
+    else {
+      selected.delete(id);
+      selectedLayers.delete(id);
+    }
+    renderBuilder();
+    syncDraft();
+  }
+  if (e.target.matches('#builder-quantity'))
+    syncDraft();
+});
+// Campo de camadas (só números). Enquanto digita, atualiza os preços sem redesenhar a tela (para não perder o foco).
+document.addEventListener('input', e => {
+  if (!e.target.matches('[data-layers]'))
+    return;
+  const id = Number(e.target.dataset.layers), opt = menu.options.find(o => o.id === id);
+  const digits = e.target.value.replace(/\D/g, '').slice(0, 2);
+  if (digits !== e.target.value)
+    e.target.value = digits;
+  let n = Number(digits);
+  if (n > MAX_LAYERS) {
+    n = MAX_LAYERS;
+    e.target.value = String(n);
+    builderMessage(`O máximo é ${MAX_LAYERS} camadas por adicional.`);
+  }
+  else
+    builderMessage('');
+  // Campo vazio ou 0 conta como 1 camada até o cliente sair do campo.
+  selectedLayers.set(id, Math.max(1, n));
+  const total = document.querySelector(`[data-layers-total="${id}"]`);
+  if (total && opt)
+    total.textContent = brl(layerPrice(opt.price, layerCountOf(id)));
+  $('#unit-price').textContent = brl(priceForBuilder());
+  syncDraft();
+});
+document.addEventListener('focusout', e => {
+  if (e.target.matches?.('[data-layers]')) {
+    e.target.value = String(layerCountOf(Number(e.target.dataset.layers)));
+    syncDraft();
+  }
+});
+// Clicar no tamanho que já está marcado não dispara "change": também coloca o produto no pedido.
+document.addEventListener('click', e => {
+  if (e.target.matches?.('[data-size]') && selectedSize && Number(e.target.dataset.size) === selectedSize.id && !draftInCart())
+    syncDraft();
+});
+document.addEventListener('click', e => {
+  const remove = e.target.closest('[data-remove]');
+  if (remove) {
+    const [removed] = cart.splice(Number(remove.dataset.remove), 1);
+    // Se saiu o produto que estava sendo montado, o montador volta ao começo.
+    if (removed && removed === draftItem) resetBuilder();
+    appliedCoupon = null;
+    $('#coupon-message').textContent = '';
+    renderCart();
+  }
+});
+// O produto que o cliente está montando já fica no pedido: entra na primeira escolha e acompanha cada mudança
+// (tamanho, acompanhamentos, adicionais, camadas e quantidade). Não existe mais o passo "Adicionar ao pedido".
+let draftItem = null;
+const draftInCart = () => !!draftItem && cart.includes(draftItem);
+function paintCartNote() {
+  const note = $('#builder-cart-note'), another = $('#another-acai');
+  if (!note) return;
+  const inCart = draftInCart();
+  another?.classList.toggle('hidden', !inCart);
+  note.classList.toggle('is-in-cart', inCart);
+  note.textContent = inCart
+    ? `✓ No seu pedido: ${draftItem.quantity}× ${draftItem.size} · ${brl(draftItem.lineTotalCents)}. Pode continuar escolhendo e tocar em “Continuar” quando terminar.`
+    : 'Escolha um produto e personalize: ele entra no pedido automaticamente.';
+}
+function resetBuilder() {
+  draftItem = null;
+  selected.clear();
+  selectedLayers.clear();
+  const q = $('#builder-quantity');
+  if (q) q.value = '1';
+  if (menu) renderBuilder();
+  paintCartNote();
+}
+function syncDraft() {
+  if (!menu || !selectedSize) {
+    if (draftInCart()) { cart.splice(cart.indexOf(draftItem), 1); renderCart(); }
+    draftItem = null;
+    paintCartNote();
+    return;
+  }
+  const opts = [...selected].map(id => menu.options.find(o => o.id === id)).filter(Boolean);
+  const unit = priceForBuilder(), quantity = Math.max(1, Number($('#builder-quantity').value || 1));
+  const optionLayers = layersObject(opts.filter(isLayered).map(o => o.id), layerCountOf);
+  const data = { sizeId: selectedSize.id, product: (menu.products.find(p => (p.sizes || []).some(s => Number(s.id) === Number(selectedSize.id))) || {}).name || 'Produto', size: selectedSize.name, quantity, optionIds: opts.map(o => o.id), optionLayers, options: opts, unitPriceCents: unit, lineTotalCents: unit * quantity };
+  if (draftInCart())
+    Object.assign(draftItem, data);
+  else {
+    draftItem = data;
+    cart.push(draftItem);
+  }
+  // O valor mudou: o cupom precisa ser validado de novo.
+  if (appliedCoupon) {
+    appliedCoupon = null;
+    $('#coupon-message').textContent = 'O pedido mudou. Aplique o cupom novamente.';
+    $('#coupon-message').classList.remove('is-success');
+  }
+  renderCart();
+  paintCartNote();
+}
+$('#view-order').addEventListener('click', () => {
+  // Quem escolheu o produto que já está na tela e não mexeu em nada: entra no pedido ao tocar em "Ver meu pedido".
+  if (!cart.length) syncDraft();
+  if (!cart.length) { builderMessage('Escolha um produto para continuar.'); return; }
+  builderMessage('');
+  $('#pedido').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+$('#another-acai').addEventListener('click', () => {
+  // Fecha o açaí atual (ele continua no pedido) e começa um novo, em branco.
+  resetBuilder();
+  builderMessage('Pronto! O açaí anterior está no pedido. Escolha o próximo produto.');
+  $('#builder').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+$('#zone-select').addEventListener('change', renderCart);
+// Entrega x retirada: na retirada some endereço e bairro (não são obrigatórios) e o frete é zero.
+function syncFulfillment() {
+  const pickup = isPickup();
+  $('#address-label').classList.toggle('hidden', pickup);
+  $('#zone-label').classList.toggle('hidden', pickup);
+  $('#address-input').required = !pickup;
+  $('#zone-select').required = !pickup;
+  $('#pickup-note').classList.toggle('hidden', !pickup);
+  $('#checkout-heading').textContent = pickup ? 'Retirada' : 'Entrega';
+  $('#order-time-label').textContent = pickup ? 'Quando deseja retirar?' : 'Quando deseja receber?';
+  renderCart();
+}
+$('#fulfillment').addEventListener('change', syncFulfillment);
+// Colheres: botões − / + e campo numérico (de 0 até store.maxSpoons), R$ 0,10 cada.
+const setSpoons = n => { $('#spoon-quantity').value = String(Math.min(maxSpoons(), Math.max(0, n))); renderCart(); };
+$('#spoon-minus').addEventListener('click', () => setSpoons(spoonCount() - 1));
+$('#spoon-plus').addEventListener('click', () => setSpoons(spoonCount() + 1));
+$('#spoon-quantity').addEventListener('input', renderCart);
+$('#spoon-quantity').addEventListener('change', () => setSpoons(spoonCount()));
+$('#payment-method').addEventListener('change', e => {
+  const cash = e.target.value === 'Dinheiro';
+  $('#cash-change-fields').classList.toggle('hidden', !cash);
+  $('#needs-change').required = cash;
+  if (!cash) {
+    $('#needs-change').value = '';
+    $('#change-for').value = '';
+    $('#change-for-label').classList.add('hidden');
+    $('#change-for').required = false;
+  }
+});
+$('#needs-change').addEventListener('change', e => {
+  const needs = e.target.value === 'yes';
+  $('#change-for-label').classList.toggle('hidden', !needs);
+  $('#change-for').required = needs;
+  if (!needs)
+    $('#change-for').value = '';
+});
+// Agendamento: o servidor entrega só os dias e horários em que a loja abre (aba Funcionamento do painel).
+let scheduleDays = [];
+function paintScheduleTimes() {
+  const day = scheduleDays.find(d => d.date === $('#schedule-day').value), time = $('#schedule-time');
+  time.innerHTML = (day ? day.slots : []).map(s => `<option value="${esc(s.value)}">${esc(s.time)}</option>`).join('');
+  $('#scheduled-for').value = time.value || '';
+}
+async function loadScheduleSlots() {
+  const dayEl = $('#schedule-day'), timeEl = $('#schedule-time'), hint = $('#schedule-hint');
+  hint.textContent = 'Carregando horários…';
+  dayEl.disabled = timeEl.disabled = true;
+  dayEl.required = timeEl.required = false;
+  $('#scheduled-for').value = '';
+  try {
+    const data = await api('/schedule-slots');
+    scheduleDays = data.days || [];
+    dayEl.innerHTML = scheduleDays.map(d => `<option value="${esc(d.date)}">${esc(d.label)}</option>`).join('');
+    if (!scheduleDays.length) {
+      timeEl.innerHTML = '';
+      hint.textContent = 'Não há horários disponíveis para agendar no momento. Fale com a loja pelo WhatsApp.';
+      return;
+    }
+    hint.textContent = `Horários disponíveis dentro do funcionamento da loja (${data.openingTime} às ${data.closingTime}).`;
+    dayEl.disabled = timeEl.disabled = false;
+    dayEl.required = timeEl.required = true;
+    paintScheduleTimes();
+  }
+  catch (err) {
+    scheduleDays = [];
+    dayEl.innerHTML = timeEl.innerHTML = '';
+    hint.textContent = 'Não foi possível carregar os horários. Verifique a conexão e tente novamente.';
+  }
+}
+$('#schedule-day').addEventListener('change', paintScheduleTimes);
+$('#schedule-time').addEventListener('change', () => { $('#scheduled-for').value = $('#schedule-time').value || ''; });
+$('#order-time').addEventListener('change', e => {
+  const scheduled = e.target.value === 'scheduled';
+  $('#schedule-label').classList.toggle('hidden', !scheduled);
+  if (scheduled)
+    loadScheduleSlots();
+  else
+    $('#scheduled-for').value = '';
+});
+$('#apply-coupon').addEventListener('click', async () => {
+  const code = $('#coupon-code').value.trim().toUpperCase(), msg = $('#coupon-message'), subtotal = cart.reduce((sum, i) => sum + i.lineTotalCents, 0), itemCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+  msg.textContent = '';
+  if (!code) {
+    msg.textContent = 'Digite o código do cupom.';
+    return;
+  }
+  if (!cart.length) {
+    msg.textContent = 'Adicione itens ao carrinho antes de aplicar o cupom.';
+    return;
+  }
+  try {
+    const c = await api(`/coupons/validate?code=${encodeURIComponent(code)}&subtotalCents=${subtotal}&itemCount=${itemCount}`);
+    appliedCoupon = c;
+    msg.textContent = `Cupom aplicado! Desconto de ${brl(c.discountCents)}.`;
+    msg.classList.remove('error-message');
+    msg.classList.add('is-success');
+    renderCart();
+  }
+  catch (err) {
+    appliedCoupon = null;
+    msg.textContent = err.message;
+    msg.classList.remove('is-success');
+    msg.classList.add('error-message');
+  }
+});
+$('#coupon-code').addEventListener('input', () => { appliedCoupon = null; $('#coupon-message').textContent = ''; renderCart(); });
+// Aviso em vermelho com tudo o que o cliente esqueceu de preencher no pedido.
+let checkoutAttempted = false;
+function checkoutProblems() {
+  const f = $('#checkout-form'), el = n => f.elements[n];
+  const val = n => String(el(n)?.value || '').trim();
+  const list = [];
+  const add = (node, text) => list.push({ node, text });
+  if (val('customerName').length < 2) add(el('customerName'), 'Seu nome');
+  const digits = val('phone').replace(/\D/g, '');
+  if (!digits) add(el('phone'), 'WhatsApp / telefone (com DDD)');
+  else if (digits.length < 10) add(el('phone'), 'WhatsApp / telefone incompleto (digite o DDD e o número)');
+  if (!isPickup()) {
+    if (val('address').length < 6) add(el('address'), 'Endereço completo (rua, número e complemento)');
+    if (!val('zoneId')) add(el('zoneId'), 'Bairro (para calcular o frete)');
+  }
+  if (!val('paymentMethod')) add(el('paymentMethod'), 'Forma de pagamento');
+  if (val('paymentMethod') === 'Dinheiro') {
+    if (!val('needsChange')) add(el('needsChange'), 'Se precisa de troco');
+    else if (val('needsChange') === 'yes' && !val('changeFor')) add(el('changeFor'), 'Troco para quanto');
+  }
+  if ($('#order-time').value === 'scheduled' && scheduleDays.length) {
+    if (!$('#schedule-day').value) add($('#schedule-day'), 'Dia do agendamento');
+    if (!$('#schedule-time').value) add($('#schedule-time'), 'Horário do agendamento');
+  }
+  return list;
+}
+function showCheckoutProblems(scrollToBox) {
+  const f = $('#checkout-form');
+  let box = $('#checkout-missing');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'checkout-missing';
+    box.className = 'checkout-missing hidden';
+    box.setAttribute('role', 'alert');
+    $('#submit-order').before(box);
+  }
+  f.querySelectorAll('.field-invalid').forEach(n => n.classList.remove('field-invalid'));
+  const problems = checkoutProblems();
+  problems.forEach(p => p.node?.classList.add('field-invalid'));
+  const sig = problems.map(p => p.text).join('|');
+  if (sig !== box.dataset.sig) {
+    box.dataset.sig = sig;
+    box.replaceChildren();
+    if (problems.length) {
+      const title = document.createElement('strong');
+      title.textContent = problems.length === 1 ? 'Falta 1 informação para fazer o pedido:' : `Faltam ${problems.length} informações para fazer o pedido:`;
+      const ul = document.createElement('ul');
+      problems.forEach(p => {
+        const li = document.createElement('li'), b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = p.text;
+        b.addEventListener('click', () => {
+          p.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          p.node.focus({ preventScroll: true });
+        });
+        li.append(b);
+        ul.append(li);
+      });
+      box.append(title, ul);
+    }
+  }
+  box.classList.toggle('hidden', !problems.length);
+  if (scrollToBox && problems.length) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return problems;
+}
+// Depois da primeira tentativa, a lista acompanha o cliente: some item por item conforme ele preenche.
+$('#checkout-form').addEventListener('input', () => { if (checkoutAttempted) showCheckoutProblems(false); });
+$('#checkout-form').addEventListener('change', () => { if (checkoutAttempted) showCheckoutProblems(false); });
+$('#checkout-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const msg = $('#checkout-message');
+  msg.textContent = '';
+  document.getElementById('order-whatsapp-box')?.remove();
+  if (!cart.length) {
+    msg.textContent = 'Adicione pelo menos um produto ao pedido.';
+    return;
+  }
+  checkoutAttempted = true;
+  if (showCheckoutProblems(true).length) return;
+  if ($('#order-time').value === 'scheduled' && !$('#scheduled-for').value) {
+    msg.textContent = scheduleDays.length ? 'Escolha o dia e o horário do agendamento.' : 'Não há horários disponíveis para agendar agora. Escolha outra opção ou fale com a loja pelo WhatsApp.';
+    return;
+  }
+  const fd = new FormData(form);
+  const payload = { customerName: fd.get('customerName'), phone: fd.get('phone'), fulfillment: fd.get('fulfillment') === 'pickup' ? 'pickup' : 'delivery', address: fd.get('address'), zoneId: Number(fd.get('zoneId')), notes: fd.get('notes'), paymentMethod: fd.get('paymentMethod'), needsChange: fd.get('needsChange') || 'no', changeFor: fd.get('changeFor') || '', spoonQuantity: spoonCount(), scheduledFor: fd.get('orderTime') === 'scheduled' ? fd.get('scheduledFor') : null, couponCode: appliedCoupon?.code || '', items: cart.map(i => ({ sizeId: i.sizeId, quantity: i.quantity, optionIds: i.optionIds, optionLayers: i.optionLayers || {} })) };
+  const button = $('#submit-order');
+  button.disabled = true;
+  button.textContent = 'Registrando pedido…';
+  try {
+    const order = await api('/orders', { method: 'POST', body: JSON.stringify(payload) });
+    const lines = order.items.map(i => `• ${i.quantity}x ${i.product} (${i.size})\n  ${i.options.map(o => o.name + layersText(o.layers)).join(', ') || 'Sem adicionais'} — ${brl(i.lineTotalCents)}`).join('\n');
+    const pickupOrder = order.fulfillment === 'pickup';
+    const scheduled = order.scheduledFor ? `\nAgendamento: ${new Date(order.scheduledFor).toLocaleString('pt-BR')}` : (order.fulfillment === 'pickup' ? '\nRetirada: agora' : '\nEntrega: agora');
+    const text = `Olá! Quero confirmar o pedido ${order.orderCode} no Bunker Rebellados.\n\n${lines}\n\nSubtotal: ${brl(order.subtotalCents)}${order.comboDiscountCents ? `\nDesconto combo: -${brl(order.comboDiscountCents)}` : ''}${order.discountCents ? `\nCupom ${order.couponCode}: -${brl(order.discountCents)}` : ''}${pickupOrder ? '\nRETIRADA NA LOJA (sem taxa de entrega)' : `\nEntrega (${order.neighborhood}): ${order.freeDelivery ? 'GRÁTIS 🎉' : brl(order.deliveryFeeCents)}`}\nColher: ${spoonText(order.spoonQuantity, order.spoonCents)}\nTOTAL: ${brl(order.totalCents)}\nPrevisão estimada: ${order.estimatedMinutesMin} a ${order.estimatedMinutesMax} minutos\n\nNome: ${order.customerName}\nTelefone: ${order.phone}${pickupOrder ? '' : `\nEndereço: ${order.address}`}
+Forma de pagamento: ${order.paymentMethod}${order.pix ? '\nValor do Pix: ' + brl(order.pix.amountCents) : ''}${order.changeFor ? `\nTroco para: R$ ${order.changeFor}` : ''}${scheduled}${order.notes ? '\nObservações: ' + order.notes : ''}\n\nO pedido foi registrado pelo site.${order.pix ? '\nO código Pix está disponível no site, na tela do pedido. Após pagar, envie o comprovante nesta conversa.\n' + PIX_NOTICE : ''}`;
+    msg.textContent = `Pedido ${order.orderCode} registrado! Agora envie no WhatsApp para a loja confirmar (botão abaixo). Guarde esse código para acompanhar, editar ou cancelar seu pedido na seção “Acompanhe seu pedido”.`;
+    $('#tracking-form [name=code]').value = order.orderCode;
+    $('#tracking-form [name=phone]').value = order.phone;
+    if ($('#save-customer-details').checked) {
+      localStorage.setItem('bunkerCustomerDetails', JSON.stringify({ customerName: order.customerName, phone: order.phone, address: String(fd.get('address') || '').trim(), zoneId: fd.get('zoneId') }));
+    }
+    else {
+      localStorage.removeItem('bunkerCustomerDetails');
+    }
+    if (localStorage.getItem('bunkerCustomerToken'))
+      loadCustomerAccount();
+    cart = [];
+    resetBuilder();
+    appliedCoupon = null;
+    $('#coupon-code').value = '';
+    $('#coupon-message').textContent = '';
+    renderCart();
+    const waUrl = `https://wa.me/${String(order.whatsappNumber || '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
+    rememberPendingWhatsapp(order, waUrl);
+    showWhatsappStep(msg, order, waUrl);
+    // Se o navegador deixou abrir o WhatsApp sozinho, avisa a loja que o cliente chegou lá.
+    if (window.open(waUrl, '_blank', 'noopener,noreferrer')) markWhatsappOpened(order.orderCode, order.phone);
+    checkoutAttempted = false;
+    form.reset();
+    restoreSavedDetails();
+    syncFulfillment();
+    $('#schedule-label').classList.add('hidden');
+    syncOrderTimeOptions();
+  }
+  catch (err) {
+    msg.textContent = err.message;
+    refreshTruffleStock();
+  }
+  finally {
+    button.disabled = false;
+    button.textContent = 'Fazer pedido';
+  }
+});
+// "Agora" só vale com a loja aberta para pedidos imediatos; fechada, o cliente cai direto em "Agendar".
+function syncOrderTimeOptions() {
+  const sel = $('#order-time'), now = sel?.querySelector('option[value="now"]');
+  if (!sel || !now || !store) return;
+  const closed = !store.openNow;
+  now.disabled = closed;
+  now.textContent = closed ? 'Agora (loja fechada)' : 'Agora';
+  if (closed && sel.value !== 'scheduled') {
+    sel.value = 'scheduled';
+    sel.dispatchEvent(new Event('change'));
+  }
+}
+// Avisa a loja que o cliente tocou no WhatsApp (o painel mostra isso no pedido). Nunca atrapalha o cliente se falhar.
+function markWhatsappOpened(code, phone) {
+  try {
+    fetch(`/api/orders/${encodeURIComponent(code)}/whatsapp-opened`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) }).catch(() => {});
+  } catch { /* segue sem avisar */ }
+}
+// Lembrete fixo: se o cliente registrou o pedido e saiu sem enviar a mensagem, o aviso volta quando ele reabrir o site.
+const PENDING_WA_KEY = 'bunkerPendingWhatsapp', PENDING_WA_MAX_MS = 6 * 60 * 60 * 1000;
+function rememberPendingWhatsapp(order, url) {
+  try { localStorage.setItem(PENDING_WA_KEY, JSON.stringify({ code: order.orderCode, phone: order.phone, url, at: Date.now() })); } catch { /* sem armazenamento */ }
+}
+function clearPendingWhatsapp() {
+  try { localStorage.removeItem(PENDING_WA_KEY); } catch { /* sem armazenamento */ }
+  document.getElementById('wa-pending-banner')?.remove();
+}
+function showPendingWhatsappBanner() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(PENDING_WA_KEY) || 'null'); } catch { data = null; }
+  if (!data || !data.url || Date.now() - Number(data.at || 0) > PENDING_WA_MAX_MS) { clearPendingWhatsapp(); return; }
+  if (document.getElementById('wa-pending-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'wa-pending-banner';
+  bar.className = 'wa-pending-banner';
+  bar.setAttribute('role', 'status');
+  const text = document.createElement('span');
+  text.textContent = `Seu pedido ${data.code} foi registrado. Falta enviar a mensagem no WhatsApp para a loja confirmar.`;
+  const send = document.createElement('a');
+  send.className = 'button button-green button-small';
+  send.href = data.url;
+  send.target = '_blank';
+  send.rel = 'noopener noreferrer';
+  send.textContent = 'Enviar no WhatsApp';
+  send.addEventListener('click', () => markWhatsappOpened(data.code, data.phone));
+  const done = document.createElement('button');
+  done.type = 'button';
+  done.className = 'button button-outline button-small';
+  done.textContent = 'Já enviei';
+  done.addEventListener('click', clearPendingWhatsapp);
+  bar.append(text, send, done);
+  document.body.prepend(bar);
+}
+// O navegador costuma bloquear janelas abertas depois de uma espera (iPhone principalmente). Por isso o botão fica na tela
+// até o cliente enviar a mensagem: o pedido só é confirmado pela loja depois disso.
+function showWhatsappStep(anchor, order, url) {
+  document.getElementById('order-whatsapp-box')?.remove();
+  const box = document.createElement('div');
+  box.id = 'order-whatsapp-box';
+  box.className = 'order-whatsapp-box';
+  box.setAttribute('role', 'status');
+  const t = document.createElement('strong');
+  t.textContent = `Falta só um passo: envie o pedido ${order.orderCode} no WhatsApp`;
+  const p = document.createElement('p');
+  p.textContent = order.pix ? 'O código Pix copia e cola está nesta página, logo abaixo. Use o botão para copiar, pague pelo app do seu banco e envie o comprovante nesta conversa do WhatsApp. ' + PIX_NOTICE : 'O pedido só é confirmado pela loja depois que você enviar a mensagem. Se o WhatsApp não abriu sozinho, toque no botão abaixo.';
+  const a = document.createElement('a');
+  a.className = 'button button-primary button-full';
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = 'Enviar pedido no WhatsApp';
+  a.addEventListener('click', () => markWhatsappOpened(order.orderCode, order.phone));
+  box.append(t, p);
+  if (order.pix) box.append(pixBlock(order.pix));
+  box.append(a);
+  anchor.insertAdjacentElement('afterend', box);
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+// Bloco "Pague com Pix": valor, código copia e cola e botão de copiar.
+function pixBlock(pix) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pix-block';
+  const h = document.createElement('strong');
+  h.textContent = `Pague com Pix: ${brl(pix.amountCents)}`;
+  const hint = document.createElement('small');
+  hint.textContent = `Recebedor: ${pix.name} · Chave: ${pix.key}`;
+  const code = document.createElement('textarea');
+  code.readOnly = true;
+  code.rows = 3;
+  code.value = pix.payload;
+  code.setAttribute('aria-label', 'Código Pix copia e cola');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'button button-outline button-full';
+  btn.textContent = 'Copiar código Pix';
+  btn.addEventListener('click', async () => {
+    const payload = String(pix.payload || '').trim();
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(payload);
+        copied = true;
+      }
+    } catch { /* tenta alternativa compatível */ }
+    if (!copied) {
+      code.focus();
+      code.select();
+      code.setSelectionRange(0, code.value.length);
+      try { copied = document.execCommand('copy'); } catch { copied = false; }
+    }
+    btn.textContent = copied ? '✓ Código copiado! Cole no app do banco' : 'Selecione e copie o código acima';
+    setTimeout(() => { btn.textContent = 'Copiar código Pix'; }, 4000);
+  });
+  wrap.append(h, hint, code, btn);
+  return wrap;
+}
+
+// "Quero esse" na galeria só leva ao cardápio (link #cardapio). Nada é anotado no pedido:
+// o sabor só entra quando a cliente escolhe o trufado no cardápio.

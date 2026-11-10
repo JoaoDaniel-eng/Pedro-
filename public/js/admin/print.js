@@ -1,0 +1,134 @@
+// Impressão do pedido em impressora térmica de 58 mm, área útil 48 mm (layout em receipt.css; usa o diálogo de impressão do navegador).
+// Para sair sozinho, sem janela de confirmação, o Chrome da loja deve abrir com --kiosk-printing (ver IMPRESSORA.md).
+const AUTO_PRINT_KEY = 'bunkerAutoPrint';
+const autoPrintOn = () => localStorage.getItem(AUTO_PRINT_KEY) === '1';
+const COPIES_KEY = 'bunkerTwoCopies', VIA_CLIENTE = 'VIA DO CLIENTE', VIA_VENDEDORA = 'VIA DA VENDEDORA';
+// Duas vias vêm ligadas; só desliga se a dona desmarcar neste aparelho.
+const twoCopiesOn = () => localStorage.getItem(COPIES_KEY) !== '0';
+const pad2 = n => String(n).padStart(2, '0');
+const fmtDateTime = d => { const x = new Date(d); return Number.isNaN(x.getTime()) ? '' : `${pad2(x.getDate())}/${pad2(x.getMonth() + 1)}/${x.getFullYear()} ${pad2(x.getHours())}:${pad2(x.getMinutes())}`; };
+function receiptBody(o, via) {
+  const items = (o.items || []).map(i => {
+    const product = i.product && !/tradicional/i.test(i.product) ? `<div class="r-opt">${esc(i.product)}</div>` : '';
+    const opts = (i.options || []).map(x => esc(x.name) + (Number(x.layers) > 1 ? ` (${Number(x.layers)} camadas)` : '')).join(', ') || 'sem adicionais';
+    return `<div class="r-item r-row"><span>${esc(i.quantity)}x ${esc(i.size)}</span><span>${brl(i.lineTotalCents)}</span></div>${product}<div class="r-opt">${opts}</div>`;
+  }).join('');
+  const when = o.scheduled_for ? `<div class="r-box">AGENDADO: ${esc(fmtDateTime(o.scheduled_for))}</div>` : `<div class="r-center r-small">${o.fulfillment === 'pickup' ? 'Retirada agora' : 'Entrega agora'}</div>`;
+  const pay = o.payment_method === 'Pix' ? 'PIX (conferir comprovante)' : esc(o.payment_method || 'A combinar');
+  const change = o.change_for ? `<div class="r-block">Troco para R$ ${esc(o.change_for)}</div>` : '';
+  const lines = [['Subtotal', brl(o.subtotal_cents)]];
+  if (Number(o.combo_discount_cents) > 0)
+    lines.push(['Desconto combo', `-${brl(o.combo_discount_cents)}`]);
+  if (Number(o.discount_cents) > 0)
+    lines.push([`Cupom ${o.coupon_code || ''}`.trim(), `-${brl(o.discount_cents)}`]);
+  if (o.fulfillment !== 'pickup')
+    lines.push([`Entrega${o.neighborhood ? ' (' + o.neighborhood + ')' : ''}`, brl(o.delivery_fee_cents)]);
+  if (Number(o.spoon_quantity) > 0)
+    lines.push([`Colher${Number(o.spoon_quantity) > 1 ? 'es' : ''} (${Number(o.spoon_quantity)}x)`, brl(o.spoon_cents)]);
+  const totals = lines.map(([a, b]) => `<div class="r-row"><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join('');
+  return `<div class="r-title">BUNKER REBELLADOS</div>${via ? `<div class="r-via">${esc(via)}</div>` : ''}<div class="r-code">${esc(o.order_code)}</div><div class="r-center r-small">${esc(fmtDateTime(o.created_at))}</div><hr class="r-line">${when}<hr class="r-line">`
+    + `<div class="r-label">Cliente</div><div class="r-block">${esc(o.customer_name)}<br>${esc(o.customer_phone)}</div>`
+    + (o.fulfillment === 'pickup' ? '<div class="r-box">RETIRADA NA LOJA</div>' : `<div class="r-label">Endereço</div><div class="r-block">${esc(o.address)}${o.neighborhood ? '<br>' + esc(o.neighborhood) : ''}</div>`)
+    + `<hr class="r-line"><div class="r-label">Pedido</div>${items}<hr class="r-line">`
+    + (Number(o.spoon_quantity) > 0 ? `<div class="r-box">${Number(o.spoon_quantity) === 1 ? 'COLHER' : 'COLHERES'}: ${Number(o.spoon_quantity)}</div>` : '<div class="r-center r-small">Sem colher</div>')
+    + (o.notes ? `<div class="r-label">Observações</div><div class="r-block">${esc(o.notes)}</div><hr class="r-line">` : '')
+    + `${totals}<div class="r-row r-total"><span>TOTAL</span><span>${brl(o.total_cents)}</span></div><hr class="r-line">`
+    + `<div class="r-label">Pagamento</div><div class="r-block">${pay}</div>${change}${via === VIA_VENDEDORA ? '' : '<div class="r-center r-small">Obrigado pela preferência!</div>'}`;
+}
+// Duas vias do mesmo pedido na mesma impressão: a do cliente e a da vendedora, em páginas separadas (a impressora corta entre elas).
+function receiptHtml(o) {
+  if (!twoCopiesOn())
+    return receiptBody(o, '');
+  return [VIA_CLIENTE, VIA_VENDEDORA].map(via => `<div class="r-copy">${receiptBody(o, via)}</div>`).join('');
+}
+function printArea() {
+  let el = document.getElementById('print-area');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'print-area';
+    document.body.append(el);
+  }
+  return el;
+}
+let printQueue = Promise.resolve();
+// Imprime um pedido por vez (vários pedidos novos ao mesmo tempo saem em sequência).
+// Qualquer erro é avisado na tela e nunca trava a fila (antes, um erro deixava todos os próximos cliques sem efeito).
+function printOrder(order) {
+  printQueue = printQueue.catch(() => { }).then(() => new Promise(resolve => {
+    let html;
+    try {
+      html = receiptHtml(order);
+    }
+    catch (e) {
+      say('Não foi possível montar o cupom: ' + e.message);
+      return resolve();
+    }
+    printArea().innerHTML = html;
+    say('Enviando o pedido ' + (order.order_code || '') + ' para a impressora…');
+    const done = () => { window.removeEventListener('afterprint', done); setTimeout(resolve, 800); };
+    window.addEventListener('afterprint', done);
+    setTimeout(() => { window.removeEventListener('afterprint', done); resolve(); }, 20000);
+    setTimeout(() => {
+      try {
+        window.print();
+      }
+      catch (e) {
+        say('O navegador não abriu a impressão: ' + e.message);
+        done();
+      }
+    }, 150);
+  }));
+  return printQueue;
+}
+const printedIds = new Set(JSON.parse(sessionStorage.getItem('bunkerPrintedIds') || '[]'));
+function rememberPrinted(id) { printedIds.add(id); sessionStorage.setItem('bunkerPrintedIds', JSON.stringify([...printedIds].slice(-100))); }
+// Chamado quando o painel percebe pedido novo: imprime os pedidos mais novos que o último já visto.
+async function autoPrintNewOrders(previousId) {
+  if (!autoPrintOn() || typeof previousId !== 'number')
+    return;
+  const rows = await api('/orders?limit=10');
+  const fresh = rows.filter(o => o.id > previousId && o.status !== 'cancelled' && !printedIds.has(o.id)).sort((a, b) => a.id - b.id);
+  for (const o of fresh) {
+    rememberPrinted(o.id);
+    await printOrder(o);
+  }
+}
+const TEST_ORDER = { order_code: 'BR-TESTE', created_at: new Date().toISOString(), customer_name: 'Cliente de Teste', customer_phone: '(21) 99999-9999', address: 'Rua Exemplo, 123', neighborhood: 'Centro', items: [{ quantity: 1, size: 'Tradicional', product: 'Bunker Clássico', options: [{ name: 'Bacon extra' }, { name: 'Queijo cheddar' }], lineTotalCents: 1900 }], notes: 'Teste de impressão', payment_method: 'Pix', subtotal_cents: 1900, delivery_fee_cents: 500, needs_spoon: true, spoon_quantity: 2, spoon_cents: 20, total_cents: 2420 };
+document.addEventListener('click', e => {
+  const btn = e.target.closest?.('[data-print-order]');
+  if (btn) {
+    const byId = window.adminOrdersById, key = btn.dataset.printOrder;
+    // O id do pedido (BIGSERIAL) chega do banco como texto; aceita texto ou número para achar o pedido.
+    const order = byId?.get(key) ?? byId?.get(Number(key)) ?? byId?.get(String(key));
+    if (order)
+      printOrder(order);
+    else
+      say('Não encontrei esse pedido na lista. Atualize a página e tente de novo.');
+    return;
+  }
+  if (e.target.id === 'print-test')
+    printOrder({ ...TEST_ORDER, created_at: new Date().toISOString() });
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'two-copies') {
+    localStorage.setItem(COPIES_KEY, e.target.checked ? '1' : '0');
+    say(e.target.checked ? 'Cada pedido sai em 2 vias: cliente e vendedora.' : 'Cada pedido sai em 1 via.');
+  }
+  if (e.target.id === 'auto-print') {
+    localStorage.setItem(AUTO_PRINT_KEY, e.target.checked ? '1' : '0');
+    say(e.target.checked ? 'Impressão automática ligada neste aparelho.' : 'Impressão automática desligada.');
+  }
+});
+// O script carrega antes da página ficar pronta: espera o DOM para marcar a caixinha salva neste aparelho.
+function initAutoPrintToggle() {
+  const box = document.getElementById('auto-print');
+  if (box)
+    box.checked = autoPrintOn();
+  const copies = document.getElementById('two-copies');
+  if (copies)
+    copies.checked = twoCopiesOn();
+}
+if (document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', initAutoPrintToggle);
+else
+  initAutoPrintToggle();
