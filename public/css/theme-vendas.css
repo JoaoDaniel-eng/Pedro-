@@ -249,3 +249,14 @@ html[data-theme="dark"] body .delivery-strip{background:var(--coal-2)}
 }
 html body .delivery-strip{max-width:1180px;width:calc(100% - 2*max(5vw,22px));margin-left:auto;margin-right:auto}
 @media(max-width:620px){html body .delivery-strip{width:calc(100% - 28px)}}
+
+/* ---------- Correções de interface ---------- */
+.size-grid>.builder-product-description{grid-column:1/-1;margin:0 0 4px;font-size:.92rem}
+html[data-theme="dark"][data-theme] .site-header .header-account-btn{background:transparent;color:#fff;border-color:rgba(255,255,255,.28)}
+html[data-theme="dark"][data-theme] .site-header .header-register-btn{background:var(--amber);color:#1c1200;border-color:var(--amber)}
+html[data-theme="dark"] .builder-steps .step-num{background:#3d332d;color:#d8cfc6}
+html[data-theme="dark"] .builder-steps li.is-active .step-num,html[data-theme="dark"] .builder-steps li.is-done .step-num{background:var(--ember);color:#fff}
+html body .builder-nav{background:var(--white);border:1px solid var(--line);border-bottom:0;box-shadow:0 -8px 24px rgba(0,0,0,.12)}
+html body .builder-nav-info strong{font-family:var(--font-head);font-size:1.4rem;color:var(--ember)}
+html[data-theme="dark"] body .builder-nav{background:#1f1a17}
+html[data-theme="dark"] body .builder-nav-info strong{color:var(--amber)}
