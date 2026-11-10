@@ -134,7 +134,7 @@
   };
 
   // "+ Adicionar outro produto" recomeça pelo tamanho.
-  $('#another-acai')?.addEventListener('click', () => goTo(1, true));
+  $('#another-product')?.addEventListener('click', () => goTo(1, true));
   // Trocar de aba (categoria de produto) muda o que os passos mostram.
   document.addEventListener('click', e => { if (e.target.closest('[data-menu-category]')) setTimeout(paint, 0); });
 

@@ -198,7 +198,7 @@ document.addEventListener('click', e => {
 let draftItem = null;
 const draftInCart = () => !!draftItem && cart.includes(draftItem);
 function paintCartNote() {
-  const note = $('#builder-cart-note'), another = $('#another-acai');
+  const note = $('#builder-cart-note'), another = $('#another-product');
   if (!note) return;
   const inCart = draftInCart();
   another?.classList.toggle('hidden', !inCart);
@@ -249,10 +249,10 @@ $('#view-order').addEventListener('click', () => {
   builderMessage('');
   $('#pedido').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
-$('#another-acai').addEventListener('click', () => {
-  // Fecha o açaí atual (ele continua no pedido) e começa um novo, em branco.
+$('#another-product').addEventListener('click', () => {
+  // Finaliza o produto atual (ele continua no pedido) e começa um novo, em branco.
   resetBuilder();
-  builderMessage('Pronto! O açaí anterior está no pedido. Escolha o próximo produto.');
+  builderMessage('Pronto! O produto anterior está no pedido. Escolha o próximo produto.');
   $('#builder').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 $('#zone-select').addEventListener('change', renderCart);
