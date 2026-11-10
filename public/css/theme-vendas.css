@@ -260,3 +260,45 @@ html body .builder-nav{background:var(--white);border:1px solid var(--line);bord
 html body .builder-nav-info strong{font-family:var(--font-head);font-size:1.4rem;color:var(--ember)}
 html[data-theme="dark"] body .builder-nav{background:#1f1a17}
 html[data-theme="dark"] body .builder-nav-info strong{color:var(--amber)}
+
+/* ---------- Botões e caixas no formato do Açaí (Poppins, mesmos cantos e sombras) ---------- */
+:root{--font-body:Poppins,Arial,sans-serif;--tint:rgba(200,40,27,.07)}
+html[data-theme="dark"]{--tint:rgba(255,255,255,.06)}
+body,button,input,select,textarea{font-family:var(--font-body)}
+
+html body .button{border-radius:12px;padding:13px 19px;font-weight:700;letter-spacing:0;box-shadow:none;transition:transform .15s,filter .15s}
+html body .button:hover{filter:brightness(.97);transform:translateY(-1px)}
+html body .button-small{padding:8px 11px;font-size:.8rem;border-radius:8px}
+html body .button-outline{border:1px solid var(--line);background:var(--white);color:var(--purple)}
+html body .button-outline:hover{border-color:var(--line);color:var(--purple)}
+html[data-theme] .site-header .header-cta{font-family:var(--font-body);font-size:.92rem;font-weight:600;border-radius:999px;padding:11px 18px;letter-spacing:0}
+html[data-theme] .site-header .header-account-btn{border-radius:999px;font-weight:700}
+.menu-category-tabs button.button{border-radius:12px;padding:13px 19px}
+
+.form-card,.cart-card,.review-form,.review-card,.login-card{border-radius:18px;box-shadow:0 7px 24px rgba(28,25,23,.05)}
+.form-card h3,.cart-card h3{font-family:var(--font-body);font-size:1.05rem;font-weight:700}
+.counter{background:var(--tint);color:var(--ember);border-radius:30px;font-size:.78rem;font-weight:700;padding:5px 10px}
+html[data-theme="dark"] .counter{color:var(--amber)}
+
+.size-card{border-radius:12px;padding:14px;gap:5px;min-height:92px}
+.size-card>span{font-weight:400;font-size:1rem}
+.size-card strong{font-family:var(--font-body);font-size:1rem;font-weight:700;line-height:1.55}
+.size-card.chosen,.option-pill.chosen{box-shadow:none;border-color:var(--ember);background:var(--tint)}
+.option-pill{border-radius:10px;padding:9px 11px;font-size:.86rem}
+
+html body .builder-actions{background:var(--tint);color:var(--ink);border-radius:16px;padding:18px 22px}
+html body .builder-actions .muted{color:var(--muted)}
+html body .builder-actions .price-large{font-family:var(--font-body);font-size:1.4rem;font-weight:700;color:var(--purple);line-height:1.55}
+html body .builder-actions .quantity-picker{color:var(--ink)}
+html body .builder-actions .button-outline{color:var(--purple);border-color:var(--line)}
+html body .builder-actions .button-primary{font-size:1rem;padding:13px 19px}
+.cart-card{border-top:1px solid var(--line)}
+.cart-grand-total{font-family:var(--font-body);font-size:1.1rem}
+html body .builder-nav-info strong{font-family:var(--font-body);font-size:1.05rem;color:var(--purple)}
+html[data-theme="dark"] body .builder-nav-info strong{color:var(--purple)}
+.mobile-cart-bar strong{font-family:var(--font-body)}
+.stock-badge{border-radius:999px}
+html body .featured-gallery-card{border-radius:22px}
+html body .promo-ribbon,html body .loyalty-promo,html body .delivery-strip{border-radius:22px}
+html[data-theme] .site-header nav{gap:16px;font-size:.86rem}
+html[data-theme] .site-header .brand{font-size:1.45rem;margin-right:14px}
